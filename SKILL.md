@@ -70,7 +70,7 @@ Args:
 | `loose` | $2B | 100M | 10% | 2.0x | 3 of 15 | any signal |
 | `catalyst` | **$1T** (raised 5/8) | unlimited | — | 1.5x | 3 of 8 | from {#5 flow, #6 catalyst, #7 darkpool, #8 theme, #9 insider/13D, #11 news, **#14 IVR pre-position**, **#15 premium-tier**} |
 | `smallcap` | **$750M** | **30M** | — | 2.0x (any RVOL counts via #13 float-velocity, threshold relaxed post-backtest) | **2 of 15** | from {#8 theme, #11 news, #12 theme-sympathy, #13 float-velocity} — squeeze gates DROPPED |
-| `setup` (NEW 5/8) | $1T | unlimited | — | — | **2 of 3** | from {**#14 IVR pre-position**, **#15 premium-tier**, #5 options flow} — read-only watchlist, no entry sizing |
+| `setup` (NEW 5/8) | $1T | unlimited | — | — | **2 of 3** | from {**#14 IVR pre-position**, **#15 premium-tier**, #5 options flow} — read-only watchlist, no entry sizing. **HARD pre-filter (5/8 run2): drop candidates w/ `abs(pct_7d) ≥ 10%`** — already-moving names are post-pop, not pre-pop. |
 
 Catalyst mode rationale: mega-caps (INTC, AMD, MU, RKLB, BABA) can pop 30%+ on policy / foundry / antitrust / regulatory / capex news without ever showing squeeze fuel. The catalyst-only signal subset is more selective for macro pops and ignores the low-float / borrow-cost gates entirely.
 
@@ -260,6 +260,8 @@ Score each ticker against the 15-signal stack (1 point per signal matched):
 **Catalyst-mode scoring divergence:** in `--mode catalyst`, only the catalyst-side subset {#5, #6, #7, #8, #9, #11, #14, #15} counts toward the threshold (3 of 8). Squeeze-side signals {#1 float, #2 SI+util, #3 CTB, #4 RVOL, #10 sentiment-velocity} are **logged but not counted** (still surfaced in the board output for context). Rationale: mega-caps physically cannot satisfy #1/#2/#3, so requiring them blocks legitimate INTC/AMD/MU/RKLB pops on AI/foundry/policy/space news. Signals #14 + #15 added 5/8 — captures setups where vol market priced movement first AND mega-flow accumulation (INTC/MU/QCOM all hit IVR=100 + >$100M net call premium BEFORE pops).
 
 **Setup-mode scoring divergence (NEW 5/8):** in `--mode setup`, only the pre-position subset {#14 IVR pre-position, #15 premium-tier, #5 options flow} counts toward the threshold (2 of 3). All other signals logged for context but not counted. Read-only watchlist — no entry sizing, no structure recommendation. Designed for daily cron via `/loop 1d /banger-board --mode setup`. Promote a setup-mode pick to default mode for full scoring + entry plan IF the setup matures into multi-signal confluence.
+
+**Setup-mode pre-filter (added 5/8 run2):** before scoring, **drop any candidate w/ `abs(pct_7d) ≥ 10%`** — already-moving names are post-pop, not pre-pop, and setup mode's purpose is to catch coiled-spring names BEFORE the move. Source: `uw_stock.iv_rank` 14d history (close[0] vs close[-1] over 7 trading days) OR `uw_stock.ohlc` 7d candles. Run2 evidence (5/8): w/o filter, signal #14a surfaced 4 names already up 15-24% over the prior week (post-pop), while pure pre-pop survivors hit IVR≥80 OR Δ7d≥+25 with price barely moved (+5-6% range). Filter applied AFTER #14 qualification, BEFORE 2/3 threshold count.
 
 ### Phase C — Multi-source rank
 
