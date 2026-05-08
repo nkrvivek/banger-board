@@ -1,6 +1,6 @@
 ---
 name: banger-board
-description: Speculative pop-hunter — surfaces ranked board of high-variance 5-7d candidates expected to pop 30%+, stacking 13 signals (float/SI/flow/catalyst/theme/sympathy/velocity). Ad-hoc, no auto-execute. Configurable to a single speculative-sleeve account; LLC/partnership accounts excluded by default. Triggered by /banger-board [N=10|20] [--theme <tag>] [--mode strict|loose|catalyst|smallcap] [--min-signals N] [--tier-split].
+description: Speculative pop-hunter — surfaces ranked board of high-variance 5-7d candidates expected to pop 30%+, stacking 14 signals (float/SI/flow/catalyst/theme/sympathy/velocity/IVR). Ad-hoc, no auto-execute. Configurable to a single speculative-sleeve account; LLC/partnership accounts excluded by default. Triggered by /banger-board [N=10|20] [--theme <tag>] [--mode strict|loose|catalyst|smallcap] [--min-signals N] [--tier-split].
 ---
 
 # /banger-board — Speculative Pop Hunter
@@ -65,12 +65,14 @@ Args:
 
 | Mode | cap max | float max | SI min | RVOL min | min signals | scope |
 |---|---|---|---|---|---|---|
-| `strict` (default) | $1B | 50M | 15% | 3.0x | 5 of 13 | any signal |
-| `loose` | $2B | 100M | 10% | 2.0x | 3 of 13 | any signal |
-| `catalyst` | $200B | unlimited | — | 1.5x | 3 of 6 | from {#5 flow, #6 catalyst, #7 darkpool, #8 theme, #9 insider/13D, #11 news} |
-| `smallcap` | **$750M** | **30M** | — | 2.0x (any RVOL counts via #13 float-velocity, threshold relaxed post-backtest) | **2 of 13** | from {#8 theme, #11 news, #12 theme-sympathy, #13 float-velocity} — squeeze gates DROPPED |
+| `strict` (default) | $1B | 50M | 15% | 3.0x | 5 of 14 | any signal |
+| `loose` | $2B | 100M | 10% | 2.0x | 3 of 14 | any signal |
+| `catalyst` | **$1T** (raised 5/8) | unlimited | — | 1.5x | 3 of 7 | from {#5 flow, #6 catalyst, #7 darkpool, #8 theme, #9 insider/13D, #11 news, **#14 IVR pre-position**} |
+| `smallcap` | **$750M** | **30M** | — | 2.0x (any RVOL counts via #13 float-velocity, threshold relaxed post-backtest) | **2 of 14** | from {#8 theme, #11 news, #12 theme-sympathy, #13 float-velocity} — squeeze gates DROPPED |
 
-Catalyst mode rationale: mega-caps (INTC, AMD, BABA) can pop 30%+ on policy / foundry / antitrust / regulatory news without ever showing squeeze fuel. The catalyst-only signal subset is more selective for macro pops and ignores the low-float / borrow-cost gates entirely.
+Catalyst mode rationale: mega-caps (INTC, AMD, MU, RKLB, BABA) can pop 30%+ on policy / foundry / antitrust / regulatory / capex news without ever showing squeeze fuel. The catalyst-only signal subset is more selective for macro pops and ignores the low-float / borrow-cost gates entirely.
+
+**Catalyst cap raise 2026-05-08 ($200B → $1T):** post-mortem of a single-day mega-cap pop event showed every largest pop sat in the $230B-$842B band (INTC +14% @ $628B / MU +15% @ $842B / AMD +11% @ $742B / QCOM +8% @ $231B / SNDK +17% @ $231B). All blocked by prior $200B cap. Subset gating is selective enough on its own. RKLB +34% ($61B, space-launch) is the canonical mid-mega-cap catalyst-mode catch alongside INTC.
 
 **MRAM mode rationale** (NEW 2026-05-08): small-cap pops (Everspin Technologies 5/8 +30% in week, sub-$300M micro-caps generally) are theme-sympathy + float-velocity driven, NOT squeeze-driven. They have:
 - Float so tiny (<30M) that even modest flow creates 5x+ RVOL (so RVOL gate is redundant — captured by signal #13)
@@ -158,7 +160,7 @@ Returns ranked `[{ticker, score (0-100), dp_direction, options_bias, confluence,
 MODE_CAPS = {
     "strict":   {"market_cap_max": 1_000_000_000,    "float_max": 50_000_000,  "rvol_min": 3.0},
     "loose":    {"market_cap_max": 2_000_000_000,    "float_max": 100_000_000, "rvol_min": 2.0},
-    "catalyst": {"market_cap_max": 200_000_000_000,  "float_max": None,        "rvol_min": 1.5},
+    "catalyst": {"market_cap_max": 1_000_000_000_000, "float_max": None,        "rvol_min": 1.5},  # raised 5/8: $200B → $1T (subset gating selective enough)
 }
 # Applied per-ticker after Phase A radon surface, using uw_stock + uw_shorts (per-ticker, fresh).
 ```
@@ -238,10 +240,11 @@ Score each ticker against the 11-signal stack (1 point per signal matched):
 | 11 | News velocity | ≥3 distinct news items <7d w/ ≥1 tier-1 source (Reuters/Bloomberg/WSJ/company PR/sector tier-1) OR single bullish tier-1 catalyst <48h (contract · partnership · regulatory approval · major customer). **Squeeze-substitute** — catches news-pops where SI/CTB fuel absent (MRAM 5/8 case). |
 | **12** | **Theme-sympathy** | Lead theme ticker (see Theme-adjacency map) up ≥10% over trailing 5d AND candidate is in same theme bucket. Captures sympathy-pop pattern where smaller name rallies on lead-name strength w/o direct catalyst. Source: `uw_stock` 5d % change on lead ticker + theme-bucket lookup. **smallcap-mode core signal.** |
 | **13** | **Float-velocity** | RVOL ≥2x on float <30M shares = +1 (smallcap-mode, post-backtest relaxed); ≥3x on float <50M for `loose` mode; ≥5x on float <30M for `strict` mode. Tiny floats move violently on small flow — heavier-weighted than vanilla RVOL signal #4. Counts ADDITIVE to #4. **smallcap-mode core signal.** Backtest 2026-05-08: MRAM popped +25% close-to-close on RVOL=2.6x (vs 30d avg) — tighter ≥5x threshold would have missed the event b/c thin float dislocates on normal volume. |
+| **14** | **IVR pre-position** | IV rank ≥80 within 7d of pop OR 7d-rising IVR trend. Captures setups where vol market has already priced expected movement. Source: `uw_stock.iv_rank` or screener `iv_rank` field. **catalyst-mode core signal** — added 2026-05-08 post-mortem: INTC/MU/QCOM/SNDK all hit IVR=100 BEFORE 5/8 pops; signal would have pre-flagged 5 of 10 same-day pops. |
 
 → Drop candidates with score < `--min-signals` (default per mode: strict=5, loose=3, catalyst=3, **smallcap=2**). Cache scores in `data/cache/banger-board-{mode}.json`.
 
-**Catalyst-mode scoring divergence:** in `--mode catalyst`, only the catalyst-side subset {#5, #6, #7, #8, #9, #11} counts toward the threshold. Squeeze-side signals {#1 float, #2 SI+util, #3 CTB, #4 RVOL, #10 sentiment-velocity} are **logged but not counted** (still surfaced in the board output for context). Rationale: mega-caps physically cannot satisfy #1/#2/#3, so requiring them blocks legitimate INTC/AMD/MU pops on AI/foundry/policy news.
+**Catalyst-mode scoring divergence:** in `--mode catalyst`, only the catalyst-side subset {#5, #6, #7, #8, #9, #11, #14} counts toward the threshold. Squeeze-side signals {#1 float, #2 SI+util, #3 CTB, #4 RVOL, #10 sentiment-velocity} are **logged but not counted** (still surfaced in the board output for context). Rationale: mega-caps physically cannot satisfy #1/#2/#3, so requiring them blocks legitimate INTC/AMD/MU/RKLB pops on AI/foundry/policy/space news. Signal #14 (IVR pre-position) added 5/8 — captures setups where vol market priced movement first (INTC/MU/QCOM all hit IVR=100 BEFORE pops).
 
 ### Phase C — Multi-source rank
 
