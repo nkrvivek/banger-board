@@ -1,11 +1,11 @@
 ---
 name: banger-board
-description: Speculative pop-hunter — surfaces ranked board of high-variance 5-7d candidates expected to pop 30%+, stacking 14 signals (float/SI/flow/catalyst/theme/sympathy/velocity/IVR). Ad-hoc, no auto-execute. Configurable to a single speculative-sleeve account; LLC/partnership accounts excluded by default. Triggered by /banger-board [N=10|20] [--theme <tag>] [--mode strict|loose|catalyst|smallcap] [--min-signals N] [--tier-split].
+description: Speculative pop-hunter — surfaces ranked board of high-variance 5-7d candidates expected to pop 30%+, stacking 15 signals (float/SI/flow/catalyst/theme/sympathy/velocity/IVR/premium-tier). Ad-hoc + daily-cron setup mode, no auto-execute. Configurable to a single speculative-sleeve account; LLC/partnership accounts excluded by default. Triggered by /banger-board [N=10|20] [--theme <tag>] [--mode strict|loose|catalyst|smallcap|setup] [--min-signals N] [--tier-split].
 ---
 
 # /banger-board — Speculative Pop Hunter
 
-**Purpose.** Hunt small-cap 30%+ weekly pops by stacking 11 stackable signals (float · short-interest · options-flow · catalyst · theme · dark-pool · sentiment · borrow-cost · RVOL · activist/insider · news-velocity). Outputs a ranked board with thesis-fit rationale, suggested structure, sizing, and exit triggers. **No auto-execute** — user picks 3-5 manually for entry via `/nl-trade` or broker UI.
+**Purpose.** Hunt 30%+ weekly pops by stacking 15 stackable signals (float · short-interest · options-flow · catalyst · theme · dark-pool · sentiment · borrow-cost · RVOL · activist/insider · news-velocity · theme-sympathy · float-velocity · IVR pre-position · premium-tier). Outputs a ranked board with thesis-fit rationale, suggested structure, sizing, and exit triggers. **No auto-execute** — user picks 3-5 manually for entry via `/nl-trade` or broker UI.
 
 Binding: per `${SLEEVE_LEDGER}` (your sleeve thesis doc — see Configuration). 5% NAV ceiling. Speculative-sleeve account only (LLC/partnership accounts excluded). NO HALT regime. NO earnings-overnight holds. NO naked OTM weeklies.
 
@@ -50,11 +50,12 @@ MCP servers required (configure in `~/.claude.json` under `mcpServers`):
 Args:
 - `N` (default 10, max 20) — board size. With `--tier-split` AND `N=20`, output is split Tier-1 (core 1-10) + Tier-2 (small-cap moonshots 11-20).
 - `--theme` — filter to one theme (`ai-memory`, `quantum`, `nuclear`, `glp1`, `defense`, `fusion`, `space`, `crypto-mining`, `photonics`, `biotech-pdufa`)
-- `--mode` — one of four pop archetypes (defaults `strict`):
+- `--mode` — one of five pop archetypes (defaults `strict`):
   - `strict` — squeeze-pop hunter (low-float + SI/CTB fuel + RVOL). Lowest false-positive rate.
   - `loose` — news-pop hunter (small/mid-cap catalysts). Broader funnel, more noise.
-  - `catalyst` — macro/policy-pop hunter (INTC-class mega-cap turnarounds, foundry/AI/regulatory catalysts). Drops squeeze requirements entirely.
-  - `smallcap` — **small-cap moonshot hunter** (NEW). Tiny-cap (<$750M), tiny-float (<30M), low signal bar (2/13). Fans out via theme-adjacency map from a lead-theme name. Highest variance — sub-$1K per pick, max 5 active in tier.
+  - `catalyst` — macro/policy-pop hunter (INTC-class mega-cap turnarounds, foundry/AI/regulatory catalysts). Drops squeeze requirements entirely. **Now includes catalyst-tier theme fan-out (5/8) — sympathy-mega-caps surface even w/o own IVR≥80.**
+  - `smallcap` — **small-cap moonshot hunter**. Tiny-cap (<$750M), tiny-float (<30M), low signal bar (2/15). Fans out via theme-adjacency map from a lead-theme name. Highest variance — sub-$1K per pick, max 5 active in tier.
+  - `setup` — **pre-pop watchlist (NEW 5/8)**. Surfaces IVR-pre-positioned + premium-tier candidates BEFORE the move. Read-only — no entry recommendation, no sizing. Designed for daily cron (`/loop 1d /banger-board --mode setup`). Captures INTC/MU-class names 3-7d before the pop.
 - `--min-signals` — explicit override (overrides mode default)
 - `--max-cap` — market-cap ceiling (overrides mode default)
 - `--tier-split` — emit 20-pick board split Tier-1 (signal-confirmed core) + Tier-2 (small-cap sympathy/moonshots). Implies `N=20`.
@@ -65,10 +66,11 @@ Args:
 
 | Mode | cap max | float max | SI min | RVOL min | min signals | scope |
 |---|---|---|---|---|---|---|
-| `strict` (default) | $1B | 50M | 15% | 3.0x | 5 of 14 | any signal |
-| `loose` | $2B | 100M | 10% | 2.0x | 3 of 14 | any signal |
-| `catalyst` | **$1T** (raised 5/8) | unlimited | — | 1.5x | 3 of 7 | from {#5 flow, #6 catalyst, #7 darkpool, #8 theme, #9 insider/13D, #11 news, **#14 IVR pre-position**} |
-| `smallcap` | **$750M** | **30M** | — | 2.0x (any RVOL counts via #13 float-velocity, threshold relaxed post-backtest) | **2 of 14** | from {#8 theme, #11 news, #12 theme-sympathy, #13 float-velocity} — squeeze gates DROPPED |
+| `strict` (default) | $1B | 50M | 15% | 3.0x | 5 of 15 | any signal |
+| `loose` | $2B | 100M | 10% | 2.0x | 3 of 15 | any signal |
+| `catalyst` | **$1T** (raised 5/8) | unlimited | — | 1.5x | 3 of 8 | from {#5 flow, #6 catalyst, #7 darkpool, #8 theme, #9 insider/13D, #11 news, **#14 IVR pre-position**, **#15 premium-tier**} |
+| `smallcap` | **$750M** | **30M** | — | 2.0x (any RVOL counts via #13 float-velocity, threshold relaxed post-backtest) | **2 of 15** | from {#8 theme, #11 news, #12 theme-sympathy, #13 float-velocity} — squeeze gates DROPPED |
+| `setup` (NEW 5/8) | $1T | unlimited | — | — | **2 of 3** | from {**#14 IVR pre-position**, **#15 premium-tier**, #5 options flow} — read-only watchlist, no entry sizing |
 
 Catalyst mode rationale: mega-caps (INTC, AMD, MU, RKLB, BABA) can pop 30%+ on policy / foundry / antitrust / regulatory / capex news without ever showing squeeze fuel. The catalyst-only signal subset is more selective for macro pops and ignores the low-float / borrow-cost gates entirely.
 
@@ -101,6 +103,8 @@ Examples:
 - `/banger-board --mode catalyst --theme ai-memory` — INTC/AMD/MU foundry-policy + AI capex pops
 - `/banger-board --mode smallcap --theme ai-memory` — small-cap moonshots only (sub-$750M ai-memory adjacencies)
 - `/banger-board --tier-split` — top-20 split: Tier-1 strict/loose core (1-10) + Tier-2 small-cap moonshots (11-20). **Recommended default for full market scan.**
+- `/banger-board --mode setup` — pre-pop watchlist (read-only, no sizing). Surfaces IVR≥80 OR rising-IVR-trend candidates BEFORE the move.
+- `/loop 1d /banger-board --mode setup` — daily cron for setup watchlist (catches mega-cap setups 3-7d before pop).
 
 ---
 
@@ -171,29 +175,37 @@ MODE_CAPS = {
 - IB Gateway down or radon `discover.py` errors → emit `[DEGRADED:radon-down]`, fall back to **UW-only Phase B-driven funnel**: seed candidate list from prior cache + thesis-aligned manual seed list (curated per theme tag), run Phase B per-ticker enrichment over seed.
 - `UW_TOKEN` missing → block (Phase B enrichment requires UW); emit `[BLOCKED:no-uw-token]`.
 
-### Phase A.6 — Theme-adjacency fan-out (NEW 2026-05-08, small-cap capture)
+### Phase A.6 — Theme-adjacency fan-out (NEW 2026-05-08, small-cap + catalyst capture)
 
-**When triggered**: `--mode smallcap` OR `--tier-split` flag is set. Skipped for pure `strict`/`loose`/`catalyst` runs.
+**When triggered**: `--mode smallcap` OR `--mode catalyst` OR `--tier-split` flag set. Skipped for pure `strict`/`loose` runs.
 
 **Logic**:
 1. From Phase A radon-surfaced candidates + verified-fresh `uw_stock` 5d % change, identify any `theme_adjacency_map` lead w/ ≥10% trailing-5d move.
-2. For each hot lead → fan out: add ALL `adjacencies[]` for that theme to the candidate set.
+2. For each hot lead → fan out: add ALL adjacency tickers for that theme to the candidate set (smallcap uses `adjacencies[]`, catalyst uses `peers[]` — see map below).
 3. Tag each fan-out candidate w/ `source: "theme-adjacency:{lead}"` (audit trail) and `signal_12_eligible: true` (theme-sympathy candidate, gets +1 if Phase B confirms).
-4. Apply smallcap-mode caps (cap <$750M, float <30M) BEFORE Phase B — a fan-out adjacency that has grown beyond $750M is dropped from smallcap tier but may still surface in `loose` if signals support. Cap raised from $500M → $750M post-backtest 2026-05-08 (MRAM ticker at $504M was borderline edge-case; $750M ceiling captures full small-cap range w/o leaking into mid-cap).
+4. **Mode-specific cap gating**:
+   - smallcap: cap <$750M AND float <30M (tiny moonshots only)
+   - catalyst: cap ≤$1T AND lead theme is hot — captures sympathy-mega-caps where own IVR<80 (e.g. AMD pulled by MU/SNDK rally even when AMD's own pre-pop IVR was 70)
+5. Cap raised from $500M → $750M post-backtest 2026-05-08 (MRAM ticker at $504M was borderline edge-case; $750M ceiling captures full small-cap range w/o leaking into mid-cap).
 
 ```python
-# Pseudocode
+# Pseudocode (mode-aware)
 hot_leads = [t for t in all_lead_tickers
              if uw_stock(t).pct_change_5d >= 10.0]
-adjacencies_to_add = set()
+peers_to_add = set()
 for lead in hot_leads:
     theme = reverse_lookup_theme(lead)
-    for adj in theme_adjacency_map[theme]["adjacencies"]:
-        if uw_stock(adj).market_cap < 500_000_000 \
-           and uw_stock(adj).float < 30_000_000:
-            adjacencies_to_add.add((adj, theme, lead))
+    if mode in ("smallcap",) or tier_split:
+        for adj in theme_adjacency_map[theme]["adjacencies"]:
+            if uw_stock(adj).market_cap < 750_000_000 \
+               and uw_stock(adj).float < 30_000_000:
+                peers_to_add.add((adj, theme, lead))
+    if mode == "catalyst":
+        for peer in theme_adjacency_map[theme].get("peers", []):
+            if uw_stock(peer).market_cap <= 1_000_000_000_000:
+                peers_to_add.add((peer, theme, lead))
 candidates += [{**c, "source": f"theme-adjacency:{lead}", ...}
-               for (c, theme, lead) in adjacencies_to_add]
+               for (c, theme, lead) in peers_to_add]
 ```
 
 **Why this matters**: small-cap names rarely show up in radon flow-discover (option chains too thin). W/o fan-out they're invisible to the funnel. With fan-out, when the lead theme is hot the adjacencies surface automatically. This is the structural fix for the "we missed Everspin pop" failure mode.
@@ -223,7 +235,7 @@ mcp__claude_ai_EXA__company_research_exa(ticker)  # signal #11 cross-check: tier
 
 **`uw_shorts` freshness gate:** if response timestamp > 7 days stale → log `[STALE-UW:uw_shorts:{ticker}]`, drop signals #2 + #3 from score (don't credit). Do not silently use 2021-vintage cached data.
 
-Score each ticker against the 11-signal stack (1 point per signal matched):
+Score each ticker against the 15-signal stack (1 point per signal matched):
 
 | # | Signal | Threshold |
 |---|---|---|
@@ -240,11 +252,14 @@ Score each ticker against the 11-signal stack (1 point per signal matched):
 | 11 | News velocity | ≥3 distinct news items <7d w/ ≥1 tier-1 source (Reuters/Bloomberg/WSJ/company PR/sector tier-1) OR single bullish tier-1 catalyst <48h (contract · partnership · regulatory approval · major customer). **Squeeze-substitute** — catches news-pops where SI/CTB fuel absent (MRAM 5/8 case). |
 | **12** | **Theme-sympathy** | Lead theme ticker (see Theme-adjacency map) up ≥10% over trailing 5d AND candidate is in same theme bucket. Captures sympathy-pop pattern where smaller name rallies on lead-name strength w/o direct catalyst. Source: `uw_stock` 5d % change on lead ticker + theme-bucket lookup. **smallcap-mode core signal.** |
 | **13** | **Float-velocity** | RVOL ≥2x on float <30M shares = +1 (smallcap-mode, post-backtest relaxed); ≥3x on float <50M for `loose` mode; ≥5x on float <30M for `strict` mode. Tiny floats move violently on small flow — heavier-weighted than vanilla RVOL signal #4. Counts ADDITIVE to #4. **smallcap-mode core signal.** Backtest 2026-05-08: MRAM popped +25% close-to-close on RVOL=2.6x (vs 30d avg) — tighter ≥5x threshold would have missed the event b/c thin float dislocates on normal volume. |
-| **14** | **IVR pre-position** | IV rank ≥80 within 7d of pop OR 7d-rising IVR trend. Captures setups where vol market has already priced expected movement. Source: `uw_stock.iv_rank` or screener `iv_rank` field. **catalyst-mode core signal** — added 2026-05-08 post-mortem: INTC/MU/QCOM/SNDK all hit IVR=100 BEFORE 5/8 pops; signal would have pre-flagged 5 of 10 same-day pops. |
+| **14** | **IVR pre-position** | EITHER (a) `iv_rank ≥ 80` (absolute current reading) OR (b) `iv_rank_delta_7d ≥ +25` percentile points (rising-trend half — captures RKLB-class names where IVR was 55 but accelerating fast). Source: `uw_stock.iv_rank` + 7d historical comparison. **catalyst-mode core signal** — added 2026-05-08 post-mortem: INTC/MU/QCOM/SNDK all hit IVR=100 BEFORE 5/8 pops. Backtest: 6/6 IVR≥80 candidates popped same day. |
+| **15** | **Premium-tier (NEW 5/8)** | `net_call_premium_5d ≥ $100M` from `uw_flow.flow_alerts` aggregated 5d. Weights mega-flow over alert-count alone — catches mega-cap accumulation (INTC/AMD/MU all >$100M net call premium pre-pop) that thin alert counts miss. **catalyst-mode + setup-mode core signal.** |
 
-→ Drop candidates with score < `--min-signals` (default per mode: strict=5, loose=3, catalyst=3, **smallcap=2**). Cache scores in `data/cache/banger-board-{mode}.json`.
+→ Drop candidates with score < `--min-signals` (default per mode: strict=5, loose=3, catalyst=3, **smallcap=2**, **setup=2**). Cache scores in `data/cache/banger-board-{mode}.json`.
 
-**Catalyst-mode scoring divergence:** in `--mode catalyst`, only the catalyst-side subset {#5, #6, #7, #8, #9, #11, #14} counts toward the threshold. Squeeze-side signals {#1 float, #2 SI+util, #3 CTB, #4 RVOL, #10 sentiment-velocity} are **logged but not counted** (still surfaced in the board output for context). Rationale: mega-caps physically cannot satisfy #1/#2/#3, so requiring them blocks legitimate INTC/AMD/MU/RKLB pops on AI/foundry/policy/space news. Signal #14 (IVR pre-position) added 5/8 — captures setups where vol market priced movement first (INTC/MU/QCOM all hit IVR=100 BEFORE pops).
+**Catalyst-mode scoring divergence:** in `--mode catalyst`, only the catalyst-side subset {#5, #6, #7, #8, #9, #11, #14, #15} counts toward the threshold (3 of 8). Squeeze-side signals {#1 float, #2 SI+util, #3 CTB, #4 RVOL, #10 sentiment-velocity} are **logged but not counted** (still surfaced in the board output for context). Rationale: mega-caps physically cannot satisfy #1/#2/#3, so requiring them blocks legitimate INTC/AMD/MU/RKLB pops on AI/foundry/policy/space news. Signals #14 + #15 added 5/8 — captures setups where vol market priced movement first AND mega-flow accumulation (INTC/MU/QCOM all hit IVR=100 + >$100M net call premium BEFORE pops).
+
+**Setup-mode scoring divergence (NEW 5/8):** in `--mode setup`, only the pre-position subset {#14 IVR pre-position, #15 premium-tier, #5 options flow} counts toward the threshold (2 of 3). All other signals logged for context but not counted. Read-only watchlist — no entry sizing, no structure recommendation. Designed for daily cron via `/loop 1d /banger-board --mode setup`. Promote a setup-mode pick to default mode for full scoring + entry plan IF the setup matures into multi-signal confluence.
 
 ### Phase C — Multi-source rank
 
@@ -349,6 +364,24 @@ Banger Board · {date} · regime: {tier} · sleeve cap: ${used}/${max}
 - If sleeve constrained → TIER-1 only; skip TIER-2 entirely.
 ```
 
+**Setup-mode emit (`--mode setup`, NEW 5/8):**
+
+```
+Banger Board · SETUP WATCHLIST · {date} · regime: {tier}
+Pre-positioned candidates (IVR ≥80 OR rising-trend ≥+25 in 7d, premium-tier ≥$100M, or recent flow alert)
+
+#  Tkr   Cap     IVR   IVR Δ7d   Net Call 5d   RVOL   ER Date   Setup score   Earliest pop window
+1  XXXX  $250B   100   +35       $185M         1.8x   05-22     3/3           5-8 days
+2  YYYY  $61B    78    +28       $112M         3.1x   none      2/3           3-5 days
+...
+
+⚠ Watchlist-only:
+- NO entry recommendation. NO sizing. NO structure suggestion.
+- Promote a name to /banger-board (default mode) for full scoring + entry plan IF setup matures.
+- Demote / remove if IVR collapses ≥20pts WITHOUT price move → false positive.
+- Designed for `/loop 1d` cron — re-runs daily, persists watchlist as `data/cache/banger-board-setup-{YYYY-MM-DD}.json`.
+```
+
 ---
 
 ## Themes (sector heat tags)
@@ -380,31 +413,40 @@ For each theme, the **lead ticker** is the >$1B name whose 5d % move drives sign
 theme_adjacency_map:
   ai-memory:
     leads:        [MU, SNDK, WDC]                # >$1B drivers
-    adjacencies:  [MRAM, NVTS, ALGM, KOPN]       # sub-$500M small-cap
+    adjacencies:  [MRAM, NVTS, ALGM, KOPN]       # sub-$750M small-cap (smallcap mode)
+    peers:        [INTC, AMD, QCOM, AVGO, ARM]   # mid/mega-cap fan-out (catalyst mode, NEW 5/8)
   quantum:
     leads:        [IONQ, RGTI, QBTS]
     adjacencies:  [ARQQ, QUBT]
+    peers:        [IBM, GOOGL]                   # quantum-research mega-caps
   nuclear:
     leads:        [OKLO, SMR, NNE, CCJ]
     adjacencies:  [LEU, USAR, UEC]
+    peers:        [VST, CEG, PWR]                # utility/grid mega-caps tied to SMR demand
   photonics:
     leads:        [LITE, CRWV, COHR]
     adjacencies:  [POET, AEVA, LASR, MVIS]
+    peers:        [NVDA, AVGO]                   # photonics customers / interconnect plays
   defense-ai:
     leads:        [KTOS, AVAV, RTX]
     adjacencies:  [RDW, PL, RKLB]                # space-defense overlap
+    peers:        [LMT, NOC, GD, BA]             # defense-prime mega-caps
   glp1:
     leads:        [LLY, NVO, HIMS]
     adjacencies:  [VKTX, ALT, REGN]
+    peers:        [PFE, MRK, AMGN]               # pharma mega-cap fan-out
   crypto-mining:
     leads:        [IREN, CORZ, MARA, RIOT]
     adjacencies:  [CIFR, BTBT, BITF]
+    peers:        [COIN, MSTR]                   # crypto-exposure mega-caps
   fusion:
     leads:        [TLN, GEV]
-    adjacencies:  []                             # no sub-$500M fusion plays exist (capital-intensive)
+    adjacencies:  []                             # no sub-$750M fusion plays exist (capital-intensive)
+    peers:        [VST, CEG]                     # utility-fusion overlap
   biotech-pdufa:
     leads:        []                             # rotates per FDA calendar — no permanent leads
     adjacencies:  []                             # populated dynamically via FMP earnings/PDUFA calendar w/in 30d
+    peers:        []
 ```
 
 **Authoring rule**: max 5 adjacencies per theme (curation > breadth). Reviewed monthly alongside themes table. New entries require: (a) sub-$500M cap, (b) clear thematic linkage, (c) at least one historical sympathy pop event vs lead.
