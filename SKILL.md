@@ -1,6 +1,6 @@
 ---
 name: banger-board
-description: Speculative pop-hunter — surfaces ranked board of high-variance 5-7d candidates expected to pop 30%+, stacking 15 signals (float/SI/flow/catalyst/theme/sympathy/velocity/IVR/premium-tier). Ad-hoc + daily-cron setup mode, no auto-execute. Configurable to a single speculative-sleeve account; LLC/partnership accounts excluded by default. Triggered by /banger-board [N=10|20] [--theme <tag>] [--mode strict|loose|catalyst|smallcap|setup] [--min-signals N] [--tier-split].
+description: Speculative pop-hunter — surfaces ranked board of high-variance 5-7d candidates expected to pop 30%+, stacking 15 signals (float/SI/flow/catalyst/theme/sympathy/velocity/IVR/premium-tier). Ad-hoc + daily-cron setup mode, no auto-execute. Configurable to a single speculative-sleeve account; LLC/partnership accounts excluded by default. Triggered by /banger-board [N=10|20] [--theme <tag>] [--mode strict|loose|catalyst|smallcap|setup|dual] [--min-signals N] [--tier-split].
 ---
 
 # /banger-board — Speculative Pop Hunter
@@ -44,7 +44,7 @@ MCP servers required (configure in `~/.claude.json` under `mcpServers`):
 ## Usage
 
 ```
-/banger-board [N=10|20] [--theme <tag>] [--mode strict|loose|catalyst|smallcap] [--min-signals N] [--max-cap CAP] [--tier-split]
+/banger-board [N=10|20] [--theme <tag>] [--mode strict|loose|catalyst|smallcap|setup|dual] [--min-signals N] [--max-cap CAP] [--tier-split]
 ```
 
 Args:
@@ -56,6 +56,7 @@ Args:
   - `catalyst` — macro/policy-pop hunter (INTC-class mega-cap turnarounds, foundry/AI/regulatory catalysts). Drops squeeze requirements entirely. **Now includes catalyst-tier theme fan-out (5/8) — sympathy-mega-caps surface even w/o own IVR≥80.**
   - `smallcap` — **small-cap moonshot hunter**. Tiny-cap (<$750M), tiny-float (<30M), low signal bar (2/15). Fans out via theme-adjacency map from a lead-theme name. Highest variance — sub-$1K per pick, max 5 active in tier.
   - `setup` — **pre-pop watchlist (NEW 5/8)**. Surfaces IVR-pre-positioned + premium-tier candidates BEFORE the move. Read-only — no entry recommendation, no sizing. Designed for daily cron (`/loop 1d /banger-board --mode setup`). Captures INTC/MU-class names 3-7d before the pop.
+  - `dual` — **two-bucket conviction emit (NEW 5/8 run2)**. Splits candidates into ABOUT-TO-POP (pre-pop, `pct_7d <10%`) + ALREADY-POPPED (post-pop, `pct_7d ≥10%`) buckets. Each scored 0-100 via Phase D.7. Pre-pop tier mapping HIGH/MED/LOW; post-pop CHASE/WAIT-PULLBACK/FADE/AVOID. Useful for daily morning view where some names are setting up + others have already broken out.
 - `--min-signals` — explicit override (overrides mode default)
 - `--max-cap` — market-cap ceiling (overrides mode default)
 - `--tier-split` — emit 20-pick board split Tier-1 (signal-confirmed core) + Tier-2 (small-cap sympathy/moonshots). Implies `N=20`.
@@ -71,6 +72,7 @@ Args:
 | `catalyst` | **$1T** (raised 5/8) | unlimited | — | 1.5x | 3 of 8 | from {#5 flow, #6 catalyst, #7 darkpool, #8 theme, #9 insider/13D, #11 news, **#14 IVR pre-position**, **#15 premium-tier**} |
 | `smallcap` | **$750M** | **30M** | — | 2.0x (any RVOL counts via #13 float-velocity, threshold relaxed post-backtest) | **2 of 15** | from {#8 theme, #11 news, #12 theme-sympathy, #13 float-velocity} — squeeze gates DROPPED |
 | `setup` (NEW 5/8) | $1T | unlimited | — | — | **2 of 3** | from {**#14 IVR pre-position**, **#15 premium-tier**, #5 options flow} — read-only watchlist, no entry sizing. **HARD pre-filter (5/8 run2): drop candidates w/ `abs(pct_7d) ≥ 10%`** — already-moving names are post-pop, not pre-pop. |
+| `dual` (NEW 5/8 run2) | $1T | unlimited | — | — | conviction ≥40 | TWO BUCKETS scored 0-100 via Phase D.7. Pre-pop bucket: `pct_7d <10%`, IVR(25)+IVR Δ7d(25)+premium(25)+catalyst proximity(25). Post-pop bucket: `pct_7d ≥10%`, pop magnitude(30)+volume(20)+IV crush risk(25)+theme cluster(15)+pullback room(10). Read-only — no auto-sizing. |
 
 Catalyst mode rationale: mega-caps (INTC, AMD, MU, RKLB, BABA) can pop 30%+ on policy / foundry / antitrust / regulatory / capex news without ever showing squeeze fuel. The catalyst-only signal subset is more selective for macro pops and ignores the low-float / borrow-cost gates entirely.
 
@@ -316,6 +318,51 @@ Returns `{milestones: {M1..M7}, decision, edge_score, structure_proposed, kelly_
 
 **Skip conditions**: IBKR Gateway not running → emit `[SKIP:radon-evaluate-no-gateway]`, continue w/o gate. radon `evaluate.py` errors per-ticker → log warning, mark `[RADON-EVAL-ERR]`, retain pick at lower confidence rank.
 
+### Phase D.7 — Conviction scoring (NEW 5/8 run2, runs for `setup` + `dual` modes)
+
+After Phase D.5 (or after Phase B for `setup` mode which bypasses D.5), compute a 0-100 conviction percentage per candidate. Two scoring formulas, applied based on bucket:
+
+**Bucket A — `about-to-pop` conviction (pre-pop names, `pct_7d < 10%`):**
+
+| Component | Weight | Formula |
+|---|---|---|
+| IVR absolute | 25 | `iv_rank ≥ 100` → 25 · `≥80` → 15 · `≥70` → 8 · `<70` → 0 |
+| IVR Δ7d (rising) | 25 | `Δ ≥ +30` → 25 · `≥ +20` → 18 · `≥ +10` → 8 · `<10` → 0 |
+| Premium-tier 5d | 25 | `net_call_premium_5d ≥ $200M` → 25 · `≥$100M` → 18 · `≥$50M` → 10 · `≥$10M` → 4 · `<$10M` → 0 |
+| Catalyst proximity | 25 | ER `≤3d` → 25 · `≤7d` → 20 · `≤14d` → 12 · `≤30d` → 6 · `>30d` → 0 |
+| **TOTAL** | **100** | |
+
+Tier mapping: `≥80` HIGH · `60-79` MEDIUM · `40-59` LOW · `<40` drop.
+
+**Bucket B — `already-popped` chase-worthiness (post-pop names, `pct_7d ≥ 10%`):**
+
+| Component | Weight | Formula |
+|---|---|---|
+| Pop magnitude | 30 | `pct_5d` 10-15% → 30 (clean breakout) · 15-25% → 18 · 25-40% → 8 · `>40%` → 0 (chase risk) |
+| Volume profile | 20 | RVOL>2 sustained 3d → 20 · 2d → 12 · 1d spike only → 4 · flat → 0 |
+| IV crush risk | 25 | post-ER + IVR>90 → 0 (vol will crush) · post-ER + IVR<60 → 15 · pre-ER + IVR rising → 25 · pre-ER + IVR flat → 12 |
+| Theme cluster strength | 15 | ≥3 names in same theme up >5% same day → 15 · 2 names → 10 · 1 (lone) → 4 |
+| Pullback room | 10 | distance from 20d MA ≤10% → 10 · 10-20% → 6 · 20-30% → 3 · `>30%` → 0 |
+| **TOTAL** | **100** | |
+
+Tier mapping: `≥80` CHASE · `60-79` WAIT-PULLBACK · `40-59` FADE · `<40` AVOID.
+
+**Bucket assignment:**
+- `pct_7d < 10%` → Bucket A (about-to-pop, conviction-scored)
+- `pct_7d ≥ 10%` → Bucket B (already-popped, chase-scored)
+- Edge case: `pct_7d` 8-12% (transitioning) → score BOTH, emit higher-confidence side.
+
+**Output sources:**
+- `iv_rank` + `iv_rank_1y` history → `mcp__unusualwhales__uw_stock` cmd `iv_rank` w/ `timespan=14d`
+- `pct_7d` + `pct_5d` → derive from `iv_rank` history close[0] vs close[-1] (or `uw_stock.ohlc` 7d candles)
+- `net_call_premium_5d` → aggregate `uw_flow.flow_alerts` over rolling 5d window per ticker
+- `RVOL` → `uw_stock.info` (5d MA volume comparison)
+- `next_earnings_date` → `uw_screener` field (or `mcp__traderkit__earnings_calendar`)
+- `theme_cluster` → cross-ref candidates against `theme_adjacency_map` for same-theme co-movement on the day
+- `20d_MA distance` → `uw_stock.ohlc` 20d candles, compute (close - MA20) / MA20
+
+Conviction is a **forward-looking probability estimate** of the relevant outcome (30%+ pop within 7d for Bucket A; clean continuation for Bucket B), NOT a historical hit-rate. Calibrate by comparing scored cohorts to actual outcomes over rolling 4-week windows.
+
 ### Phase E — Emit board
 
 **Standard emit (single tier, N=10 default):**
@@ -382,6 +429,34 @@ Pre-positioned candidates (IVR ≥80 OR rising-trend ≥+25 in 7d, premium-tier 
 - Promote a name to /banger-board (default mode) for full scoring + entry plan IF setup matures.
 - Demote / remove if IVR collapses ≥20pts WITHOUT price move → false positive.
 - Designed for `/loop 1d` cron — re-runs daily, persists watchlist as `data/cache/banger-board-setup-{YYYY-MM-DD}.json`.
+```
+
+**Dual-mode emit (`--mode dual`, NEW 5/8 run2 — two-bucket conviction-scored):**
+
+```
+Banger Board · DUAL · {date} · regime: {tier}
+
+═══ ABOUT-TO-POP — pre-pop names w/ pct_7d < 10%, conviction-scored ═══
+#  Tkr   Cap     IVR    IVR Δ7d   Net Call 5d  pct_7d   ER         Conv  Tier    Components
+──────────────────────────────────────────────────────────────────────────────────────────────
+1  XXX   $XXB    100    +36       $5M          +6%      YYYY-MM-DD 92    HIGH    IVR=15+Δ=25+prem=4+ER=25+bonus=23 (#14a+#14b dual fire)
+2  YYY   $XXXB   100    +10       $4M          +5%      YYYY-MM-DD 78    MEDIUM  IVR=25+Δ=8+prem=4+ER=20+pinned=21
+3  ...
+
+═══ ALREADY-POPPED — post-pop names w/ pct_7d ≥ 10%, chase-scored ═══
+#  Tkr   Cap     pct_5d  RVOL   IVR    ER         Theme cluster   Conv  Action          Components
+─────────────────────────────────────────────────────────────────────────────────────────────────────
+1  AAA   $XXXB   +15%    3.2x   99     YYYY-MM-DD theme-X(3+)     72    CHASE           pop=18+vol=20+IV=12+theme=15+pullback=7
+2  BBB   $XXB    +24%    2.1x   100    YYYY-MM-DD theme-X(2)      45    WAIT-PULLBACK   pop=8+vol=12+IV=0+theme=10+pullback=15
+3  CCC   $XXXB   +15%    1.8x   93     YYYY-MM-DD theme-Y(1)      38    FADE            pop=18+vol=4+IV=0+theme=4+pullback=12
+4  ...
+
+⚠ Dual-mode rules:
+- ABOUT-TO-POP: HIGH conv ≥80 → consider pre-position via setup → /banger-board default mode for full scoring + entry plan
+- ALREADY-POPPED: CHASE ≥80 only · WAIT-PULLBACK consider entry on -5% retrace · FADE = put debit spread or skip · AVOID = no action
+- Edge case: pct_7d 8-12% → score BOTH buckets, emit higher-confidence side
+- All entries still subject to standard banger-board rules (5% sleeve, 7d hard close, -50% stop, no earnings overnight)
+- Conviction is forward-looking probability (30%+ pop in 7d for Bucket A · clean continuation for Bucket B), NOT a backtest hit-rate
 ```
 
 ---
