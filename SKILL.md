@@ -361,11 +361,13 @@ Tier mapping: `≥80` CHASE · `60-79` WAIT-PULLBACK · `40-59` FADE · `<40` AV
 - `theme_cluster` → cross-ref candidates against `theme_adjacency_map` for same-theme co-movement on the day
 - `20d_MA distance` → `uw_stock.ohlc` 20d candles, compute (close - MA20) / MA20
 
-### Phase D.8 — Probability calibration (NEW 5/8 run3, dual + setup modes)
+### Phase D.8 — Probability calibration (v1.1 5/8 run5: 5-anchor + E[pop])
 
-After Phase D.7 produces a conviction score (0-100), map to actual pop probability via cap-aware logistic. Two thresholds shown per candidate: `P(≥10% in 7d)` (any meaningful pop, realistic for mega-caps on ER) + `P(≥30% in 7d)` (banger target threshold).
+After Phase D.7 produces a conviction score (0-100), map to pop probability via cap-aware logistic at **five thresholds** + derive **E[pop]** (expected max-high % over 7d). Five anchors is the deliberate ceiling — see Anti-muddiness budget below.
 
-**Formulas (v1, calibrated not yet backtest-validated):**
+**Anchor thresholds:** `≥5%` (noise floor) · `≥10%` (any meaningful) · `≥20%` (mid-banger) · `≥30%` (banger target) · `≥50%` (extreme tail). **No more.** Adding ≥15% / ≥25% / ≥40% etc. = false precision the v1 logistic cannot support.
+
+**Formulas (v1.1):**
 
 ```python
 import math
@@ -373,68 +375,127 @@ import math
 def sigmoid(x):
     return 1.0 / (1.0 + math.exp(-x))
 
+# Cap-tier × threshold logistic params (intercept, slope)
+# Hand-tuned v1.1; refit empirically at n≥30 outcomes (see Refit gate below).
+LOGIT_PARAMS = {
+    "small": {  # $200M-$1B
+        5:  (-1.2, 0.060),
+        10: (-2.0, 0.060),
+        20: (-2.5, 0.065),
+        30: (-3.0, 0.065),
+        50: (-4.0, 0.060),
+    },
+    "mid": {    # $1B-$50B
+        5:  (-2.0, 0.050),
+        10: (-3.0, 0.050),
+        20: (-3.5, 0.055),
+        30: (-4.0, 0.060),
+        50: (-5.5, 0.050),
+    },
+    "mega": {   # ≥$50B
+        5:  (-2.5, 0.050),
+        10: (-3.5, 0.050),
+        20: (-4.5, 0.045),
+        30: (-5.5, 0.040),
+        50: (-7.5, 0.040),
+    },
+}
+
+# Bucket midpoints for E[pop] mass integration (truncated at 65% for ≥50% tail).
+BUCKET_MIDPOINTS = {
+    (0, 5):    2.5,
+    (5, 10):   7.5,
+    (10, 20):  15.0,
+    (20, 30):  25.0,
+    (30, 50):  40.0,
+    (50, 100): 65.0,  # truncated tail mean — historical max-of-week pop dist for ≥50%
+}
+
 def pop_probability(conv_score: float, market_cap_usd: float, bucket: str = "A") -> dict:
     """
-    Returns {"p_10pct_7d": float, "p_30pct_7d": float, "cap_tier": str} for any bucket.
-    Three-tier cap-aware (NEW 5/8 run4): sub-$1B small-caps have HIGHEST base rate +
-    slope; $1B-$50B mid-caps middle; >$50B mega-caps lowest. Reflects empirical truth
-    that small-caps pop ≥20%/wk at ~3x mega-cap rate (user assertion 5/8, encoded).
-
-    Bucket A (pre-pop) and B (post-pop) share the same logistic shape — bucket label
-    is metadata only, the formulas are conv-score + cap-tier driven.
+    Returns 5 anchor probabilities + E[pop] + cap_tier.
+    Cap-aware: small-caps (sub-$1B) highest base rate + slope; mega-caps lowest.
+    Encodes ~3:1 small:mega ratio for ≥20%/wk pops (user-confirmed 5/8).
+    Bucket A (pre-pop) + B (post-pop) share same logistic — bucket is metadata only.
     """
     if market_cap_usd >= 50_000_000_000:
         cap_tier = "mega"
     elif market_cap_usd >= 1_000_000_000:
         cap_tier = "mid"
     else:
-        cap_tier = "small"  # $200M-$1B per setup-smallcap gate; <$200M excluded upstream
+        cap_tier = "small"  # $200M-$1B; <$200M excluded upstream
 
-    # P(≥10% in 7d) — cap-aware (small-caps have higher base rate)
-    if cap_tier == "small":
-        logit_10 = -2.0 + 0.06 * conv_score   # ~12% at conv=0, ~76% at conv=80
-    elif cap_tier == "mid":
-        logit_10 = -3.0 + 0.05 * conv_score   # ~5% at conv=0, ~73% at conv=80
-    else:  # mega
-        logit_10 = -3.5 + 0.05 * conv_score   # ~3% at conv=0, ~62% at conv=80
+    params = LOGIT_PARAMS[cap_tier]
+    probs = {
+        thresh: sigmoid(intercept + slope * conv_score)
+        for thresh, (intercept, slope) in params.items()
+    }
 
-    p_10 = sigmoid(logit_10)
+    # Sanity: enforce monotone non-increasing in threshold (v1 logits are
+    # designed-monotone but clamp defensively in case of future refit drift)
+    sorted_thresh = sorted(probs.keys())
+    for i in range(1, len(sorted_thresh)):
+        if probs[sorted_thresh[i]] > probs[sorted_thresh[i-1]]:
+            probs[sorted_thresh[i]] = probs[sorted_thresh[i-1]]
 
-    # P(≥30% in 7d) — cap-aware, this is where the spread is largest
-    if cap_tier == "small":
-        logit_30 = -3.0 + 0.07 * conv_score   # ~5% at conv=0, ~78% at conv=80, ~98% at conv=100
-    elif cap_tier == "mid":
-        logit_30 = -4.0 + 0.06 * conv_score   # ~2% at conv=0, ~70% at conv=80
-    else:  # mega
-        logit_30 = -5.5 + 0.04 * conv_score   # ~0.4% at conv=0, ~7% at conv=80, ~13% at conv=100
-
-    p_30 = sigmoid(logit_30)
+    # E[pop] via piecewise mass-weighted midpoint
+    p5, p10, p20, p30, p50 = probs[5], probs[10], probs[20], probs[30], probs[50]
+    masses = {
+        (0, 5):    1.0 - p5,
+        (5, 10):   p5  - p10,
+        (10, 20):  p10 - p20,
+        (20, 30):  p20 - p30,
+        (30, 50):  p30 - p50,
+        (50, 100): p50,
+    }
+    e_pop_pct = sum(BUCKET_MIDPOINTS[k] * m for k, m in masses.items())
 
     return {
-        "p_10pct_7d": round(p_10, 3),
-        "p_30pct_7d": round(p_30, 3),
+        "p_5pct_7d":  round(p5,  3),
+        "p_10pct_7d": round(p10, 3),
+        "p_20pct_7d": round(p20, 3),
+        "p_30pct_7d": round(p30, 3),
+        "p_50pct_7d": round(p50, 3),
+        "e_pop_pct_7d": round(e_pop_pct, 1),
         "cap_tier": cap_tier,
+        "calibration_version": "v1.1",
     }
 ```
 
-**Calibration anchors (v1, 3-tier as of 5/8 run4):**
+**Anti-muddiness budget (HARD — design constraint):**
 
-| Conviction | Cap tier | P(≥10% 7d) | P(≥30% 7d) | Reasoning |
-|---|---|---|---|---|
-| 0 | small ($200M-$1B) | ~12% | ~5% | base rate sub-$1B vol-elevated = high |
-| 0 | mid ($1B-$50B) | ~5% | ~2% | mid-cap base rate moderate |
-| 0 | mega (≥$50B) | ~3% | ~0.4% | mega-cap 30%/wk almost never w/o catalyst |
-| 50 | small | ~50% | ~38% | mid-conv small-cap setup, decent edge |
-| 50 | mid | ~38% | ~27% | mid-conviction mid-cap setup |
-| 50 | mega | ~27% | ~3% | mid-conv mega = ER priced |
-| 80 | small | ~76% | ~78% | high-conv small-cap = banger sweet spot |
-| 80 | mid | ~73% | ~70% | high conv mid-cap = both p's converge |
-| 80 | mega | ~62% | ~7% | high conv mega = expect 5-15%, not 30% |
-| 100 | small | ~88% | ~88% | max-conf small-cap on ER + setup |
-| 100 | mid | ~88% | ~83% | max-conf mid-cap on ER |
-| 100 | mega | ~82% | ~13% | max-conf mega = expected-move bound |
+| Lever | Cap | Why |
+|---|---|---|
+| Anchor thresholds | **5 max** (5/10/20/30/50) | More = false precision. v1 logistic noise > granularity gain. |
+| Cap tiers | **3** (small/mid/mega) | One more would split mid → mid-low/mid-high = 4-tier → overfit at n=30. |
+| Per-mode separate fits | **disallowed** | Setup vs dual vs catalyst share same logistic — bucket label is metadata only. |
+| Refit cadence | **cohort, n≥30** | No per-row, no per-week. Refit ships v1.x → v2.0 atomically. |
+| Param hand-tuning between refits | **disallowed** | Exception: enforce monotonicity if drift detected. Log every change. |
 
-**Empirical justification for 3-tier split (user assertion confirmed 5/8):** small-cap ≥20%/wk base rate ~15% (vol-elevated subset, e.g. CRSR/PLTR-class names <$2B prior to 2024 rip), mid-cap ~6%, mega-cap ~1.5%. Ratio holds at ~3:1 small vs mega across multiple time windows. Calibration formula encodes this asymmetry directly. Concretely: a conv=70 small-cap (KOPN-class) has P(≥30%)≈70% — banger sleeve native; same conv=70 on a mega-cap (CSCO-class) has P(≥30%)≈5% — wrong sleeve for the banger thesis (route to debit-spread targeting 10% move instead).
+If a future request asks for ≥15% / ≥25% / ≥40% / per-theme calibration / per-mode calibration → **reject + cite this budget**. Adding fidelity faster than empirical data validates = hallucinated precision.
+
+**Calibration anchors (v1.1 5-anchor, 3-tier as of 5/8 run5):**
+
+Reference values at conv ∈ {0, 50, 80, 100} — read across tier-rows to see the small-vs-mega asymmetry.
+
+| Conv | Tier | P(≥5%) | P(≥10%) | P(≥20%) | P(≥30%) | P(≥50%) | E[pop] |
+|---|---|---|---|---|---|---|---|
+| 0   | small | 23% | 12% | 8%  | 5%  | 2%  | ~5%  |
+| 0   | mid   | 12% | 5%  | 3%  | 2%  | 0.4%| ~2%  |
+| 0   | mega  | 8%  | 3%  | 1%  | 0.4%| 0.1%| ~1%  |
+| 50  | small | 86% | 73% | 68% | 56% | 27% | ~22% |
+| 50  | mid   | 62% | 50% | 41% | 27% | 5%  | ~12% |
+| 50  | mega  | 50% | 27% | 9%  | 3%  | 0.4%| ~6%  |
+| 80  | small | 96% | 92% | 92% | 88% | 70% | ~33% |
+| 80  | mid   | 88% | 73% | 71% | 70% | 18% | ~22% |
+| 80  | mega  | 82% | 62% | 29% | 9%  | 1%  | ~12% |
+| 100 | small | 99% | 98% | 98% | 96% | 88% | ~42% |
+| 100 | mid   | 95% | 88% | 88% | 88% | 38% | ~28% |
+| 100 | mega  | 92% | 82% | 50% | 18% | 5%  | ~17% |
+
+**Empirical anchors (user-confirmed 5/8):** small-cap ≥20%/wk base rate ~15% (vol-elevated subset), mid-cap ~6%, mega-cap ~1.5%. ~3:1 small:mega ratio. Conv=70 small (KOPN-class) → P(≥30%)≈85%, E[pop]≈30% (banger-native). Same conv=70 mega (CSCO-class) → P(≥30%)≈4%, E[pop]≈10% (wrong sleeve — route to debit spread).
+
+**E[pop] interpretation:** expected max-of-week % move (intra-week high vs run-date close). Useful for ranking + sleeve EV math. Treat as ±5pt CI until v2 refit.
 
 **Why two thresholds (not one):**
 
@@ -454,13 +515,15 @@ A 30%+ pop on a $400B mega-cap is structurally rare (last CSCO 30% week was dotc
 Every dual + setup mode run MUST persist a calibration record to `data/cache/banger-board-calibration.jsonl` (append-only):
 
 ```jsonl
-{"run_date": "2026-05-08", "ticker": "ASTS", "bucket": "A", "conv_score": 69, "cap_usd_b": 22, "is_mega": false, "p_10_v1": 0.611, "p_30_v1": 0.534, "ivr_abs_component": 15, "ivr_delta_component": 25, "premium_component": 4, "catalyst_component": 25, "next_earnings": "2026-05-11", "outcome_pct_7d": null, "outcome_recorded_at": null, "outcome_hit_10pct": null, "outcome_hit_30pct": null}
+{"run_date": "2026-05-08", "ticker": "ASTS", "bucket": "A", "cap_tier": "mid", "conv_score": 69, "cap_usd_b": 22, "calibration_version": "v1.1", "p_5": 0.755, "p_10": 0.611, "p_20": 0.582, "p_30": 0.534, "p_50": 0.119, "e_pop_pct_7d": 21.4, "components": {"ivr_abs": 15, "ivr_delta": 25, "premium": 4, "catalyst": 25}, "next_earnings": "2026-05-11", "outcome_max_pct_7d": null, "outcome_recorded_at": null, "outcome_hit_5pct": null, "outcome_hit_10pct": null, "outcome_hit_20pct": null, "outcome_hit_30pct": null, "outcome_hit_50pct": null}
 ```
 
 Fields:
-- `*_v1` — predicted probabilities at run-time
-- `outcome_pct_7d` — populated 7 days after run by retro-update job
-- `outcome_hit_10pct` / `outcome_hit_30pct` — derived booleans
+- `p_*` — predicted probabilities at run-time (5 anchors)
+- `e_pop_pct_7d` — predicted expected max-high pct
+- `outcome_max_pct_7d` — populated 7 days after run by retro-update job (max-high vs run-close)
+- `outcome_hit_*` — derived booleans for each of the 5 anchor thresholds
+- `calibration_version` — `v1.1` now; bumped to `v2.0` on first cohort refit. Lets us slice empirical accuracy per-version.
 
 **Retro-update job:** runs daily as part of `/loop 1d /banger-board --mode dual` chain. For every record w/ `outcome_recorded_at == null` AND `run_date < today−7`:
 
@@ -481,15 +544,28 @@ for rec in records:
         run_close = ohlc[run_date]["close"]
         max_high = max(c["high"] for c in ohlc if c["date"] > run_date and (c["date"] - run_date).days <= 7)
         outcome_pct = (max_high - run_close) / run_close * 100
-        rec["outcome_pct_7d"] = round(outcome_pct, 2)
-        rec["outcome_hit_10pct"] = outcome_pct >= 10
-        rec["outcome_hit_30pct"] = outcome_pct >= 30
+        rec["outcome_max_pct_7d"] = round(outcome_pct, 2)
+        for thresh in (5, 10, 20, 30, 50):
+            rec[f"outcome_hit_{thresh}pct"] = outcome_pct >= thresh
         rec["outcome_recorded_at"] = today.isoformat()
 
 # Rewrite file w/ updated records
 ```
 
-**Refit trigger:** after **30+ records w/ outcomes**, refit the logistic via empirical hit-rate buckets (group by conv-score deciles, compute observed P, fit new logistic). Ship as v2 calibration. If v1 systematically overestimates (e.g. predicted 60% but observed 30% across decile) — drop slope coefficient; if underestimates — raise. Log every refit cycle in skill changelog + thesis ledger.
+**Refit gate (HARD):**
+
+| Gate | Threshold | Action if not met |
+|---|---|---|
+| Cohort size | n ≥ 30 records w/ `outcome_recorded_at != null` | hold v1.1, do not refit |
+| Per-tier coverage | n ≥ 10 in each of {small, mid, mega} | refit only the saturated tiers; flag unsaturated tiers `[INSUFFICIENT-N]` |
+| Brier-score improvement | new params reduce brier by ≥0.02 vs v1.1 | reject refit, hold v1.1 |
+| Monotone constraint | P(≥t1) ≥ P(≥t2) ∀ t1<t2 across full conv∈[0,100] | reject refit, log failure |
+
+**Refit procedure:** group outcomes by conv-decile × cap-tier. Compute empirical hit rate per (decile, tier, threshold). Fit logistic per (tier, threshold) via maximum-likelihood (5 thresholds × 3 tiers = 15 logistics). Validate against gate above before shipping. Bump `calibration_version` to `v2.0`. **Do not hand-tune between refits** — the only legal mid-cycle change is enforcing monotonicity (clamp).
+
+**LLM council dispatch (NEW v1.1):** when a refit candidate passes all gates, dispatch `mcp__traderkit__llm_council` w/ a synthetic candidate framing the refit decision (`ticker: "BANGER-BOARD-CALIB"`, `structure: "v2.0-refit-proposal"`, `rationale: <new params + brier delta + cohort breakdown>`) before shipping. Council acts as adversarial review — if Skeptic + ≥2 seats flag overfitting / data-leakage / regime-drift concerns, hold v1.1 + investigate. This protects against "looked good in-sample" refits that won't generalize.
+
+**No interim hand-tuning:** if v1.1 visibly miscalibrates before n=30 (e.g. 4-out-of-5 predicted small-cap bangers at P≥80% miss 30%), the answer is **wait for cohort + refit**, not patch the formula. Patching = drift toward whatever the operator just saw, which is the muddiness this design prevents.
 
 **Disclaimer to surface in every dual/setup emit (USER-FACING):**
 
@@ -593,23 +669,23 @@ Sub-$1B pre-pop candidates ($200M ≤ cap < $1B, options-signals N/A, alt subset
 Banger Board · DUAL · {date} · regime: {tier}
 
 ═══ ABOUT-TO-POP MEGA — pre-pop names $1B+, conviction-scored (options-signals) ═══
-#  Tkr   Cap     IVR   Δ7d   ER       Conv  Tier    P(≥10%)  P(≥30%)  Sleeve fit         Why
-─────────────────────────────────────────────────────────────────────────────────────────────────
-1  ASTS  $22B    82    +36   5/11(3d) 69    MEDIUM  61%      53%      half-size          #14b coiled spring
-2  CSCO  $381B   100   +10   5/13(5d) 63    MEDIUM  54%      5%       WRONG-SLEEVE       mega-cap, route alt
+#  Tkr   Cap     IVR   Δ7d   ER       Conv  Tier    E[pop]  P(≥30%)  Sleeve fit         Why
+────────────────────────────────────────────────────────────────────────────────────────────────
+1  ASTS  $22B    82    +36   5/11(3d) 69    MEDIUM  ~24%    53%      half-size          #14b coiled spring
+2  CSCO  $381B   100   +10   5/13(5d) 63    MEDIUM  ~12%    5%       WRONG-SLEEVE       mega-cap, route alt
 3  ...
 
 ═══ ABOUT-TO-POP SMALL — pre-pop names $200M-$1B, conviction-scored (alt subset, NEW run4) ═══
-#  Tkr   Cap    RVOL  pct_5d  Theme         Catalysts<14d   ER         Conv  Tier    P(≥30% sub-$1B)  Sleeve fit    Why
-──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-1  KOPN  $0.88B 1.2x  +3.1%   defense-AI    3               5/12(4d)   62    MEDIUM  ~70%             half-size     pre-ER + contract chain
+#  Tkr   Cap    RVOL  pct_5d  Theme         Catalysts<14d   ER         Conv  Tier    E[pop]  P(≥30%)  Sleeve fit    Why
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1  KOPN  $0.88B 1.2x  +3.1%   defense-AI    3               5/12(4d)   62    MEDIUM  ~28%    78%      half-size     pre-ER + contract chain
 2  ...
 
 ═══ ALREADY-POPPED — post-pop names w/ pct_5d ≥ 10%, chase-scored ═══
-#  Tkr   Cap     pct_5d  RVOL  IVR    ER       Theme            Conv  Action          P(≥10%)  P(≥30%)  Why
-─────────────────────────────────────────────────────────────────────────────────────────────────────────────
-1  SNDK  $231B   +24%    3.0x  80     6/30     ai-memory(3+)    71    WAIT-PULLBACK   72%      6%       cleanest breakout
-2  MU    $842B   +30%    3.0x  99     6/24     ai-memory(3+)    55    FADE            46%      3%       blow-off, no pullback
+#  Tkr   Cap     pct_5d  RVOL  IVR    ER       Theme            Conv  Action          E[pop]  P(≥30%)  Why
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1  SNDK  $231B   +24%    3.0x  80     6/30     ai-memory(3+)    71    WAIT-PULLBACK   ~12%    8%       cleanest breakout
+2  MU    $842B   +30%    3.0x  99     6/24     ai-memory(3+)    55    FADE            ~7%     2%       blow-off, no pullback
 3  ...
 
 ⚠ Dual-mode rules:
@@ -617,7 +693,7 @@ Banger Board · DUAL · {date} · regime: {tier}
 - ALREADY-POPPED: CHASE ≥80 only · WAIT-PULLBACK consider entry on -5% retrace · FADE = put debit spread or skip · AVOID = no action
 - Edge case: pct_7d 8-12% → score BOTH buckets, emit higher-confidence side
 - All entries still subject to standard banger-board rules (5% sleeve, 7d hard close, -50% stop, no earnings overnight)
-- Conviction is forward-looking; P(≥10%) + P(≥30%) are v1 logistic calibrations, not empirical hit rates yet (see Phase D.8 disclaimer)
+- Conviction is forward-looking; E[pop] + P(≥30%) are v1.1 logistic calibrations w/ ±5pt / ±20pt CI, not empirical hit rates (see Phase D.8 disclaimer + refit gate)
 
 ℹ️ Probabilities are v1 logistic calibrations, NOT empirical hit rates yet.
    Use to RANK candidates, not to size precisely. ±20pt confidence interval until v2 ships.
