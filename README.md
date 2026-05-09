@@ -143,6 +143,90 @@ Set these env vars in your shell rc to point at your own ledger / regime docs:
 
 ---
 
+## Probability calibration (Phase D.8 v1.1) — upside
+
+After signals are stacked, banger-board emits a **conviction score (0-100)** per candidate, mapped through a **cap-aware logistic** to five anchor probabilities + an expected-pop magnitude.
+
+**Five anchor thresholds** (deliberate ceiling — see anti-muddiness budget): `≥5%` (noise floor) · `≥10%` (any meaningful) · `≥20%` (mid-banger) · `≥30%` (banger target) · `≥50%` (extreme tail).
+
+**Three cap tiers:** `small` ($200M-$1B) / `mid` ($1B-$50B) / `mega` (≥$50B). Small-caps hit ≥20% weekly at ~3x mega-cap base rate.
+
+**E[pop] derivation:** piecewise mass-weighted midpoint integration over the 5 anchor buckets (midpoints 2.5/7.5/15/25/40/65%). Output is "expected max-of-week % move (intra-week high vs run-close)".
+
+**Anti-muddiness budget (HARD design constraint):** 5 anchors max, 3 tiers max, no per-mode fits, cohort refit at n≥30, no hand-tuning between refits. Adding `≥15%` / `≥25%` / per-theme calibration = false precision the v1 logistic cannot support.
+
+**Refit governance:** cohort gate n≥30 + per-tier n≥10 + Brier improvement ≥0.02 + monotone constraint + LLM council adversarial review. Bumps `v1.x → v2.0` atomically. Calibration tracker is append-only at `data/cache/banger-board-calibration.jsonl` (5 boolean outcome hits filled by t+7 retro-update job).
+
+**MRAM-PROFILE flag** (NEW v1.1): structural pre-pop matcher. Any candidate satisfying ALL of:
+1. Cap $200M-$1B
+2. `pct_7d < 5%` (truly pre-pop)
+3. Float < 30M shares
+4. Lead theme ticker popped ≥10% in last 5d
+5. Candidate is in same theme bucket via `theme_adjacency_map`
+
+→ tagged `[MRAM-PROFILE]` and treated as **HIGH conviction by default** (override conv-score gate). Designed post-Everspin 5/8 +67% blow-off to catch the next analog before the move.
+
+---
+
+## Drawdown calibration (Phase D.9 v0.1) — downside
+
+Mirror logistic for predicting probability of max-low drawdown over 7d at five negative anchors. **Critical separation:** drawdown drivers ≠ pop drivers, so a separate `drawdown_score` (0-100) is computed from structurally different components.
+
+**Five anchor thresholds:** `≤−5%` · `≤−10%` · `≤−20%` · `≤−30%` · `≤−50%`. Same anti-muddiness budget as upside.
+
+**Drawdown score components (0-100 total):**
+
+| # | Component | Range | Trigger |
+|---|---|---|---|
+| 1 | already_popped_magnitude | 0-30 | Bucket B `pct_5d`: 0-10%=0, 10-20%=10, 20-30%=20, 30%+=30. Mean-reversion gravity ↑ w/ pop size. |
+| 2 | iv_crush_risk | 0-20 | IVR<60=0, 60-80=5, 80-95=15, 95-100+ER<7d=20. Captures post-ER vol unwind (-10 to -25% typical). |
+| 3 | theme_rotation_risk | 0-15 | cluster≥3 + leads already +20%/5d=15; cluster=2=8; cluster=1=0. Late-stage rotation. |
+| 4 | cap_fragility | 0-15 | small+float<30M=15; small+float<60M=10; mid=5; mega=0. Halt/dilution/delisting tail. |
+| 5 | rvol_exhaustion | 0-20 | RVOL≥3x sustained 3d+ AND pct_5d≥30%=20 (blow-off); RVOL≥3x 1-2d=10; RVOL 2-3x=5. |
+
+**Combined EV (sleeve action gate):**
+
+```
+e_net_pct_7d = e_pop_pct_7d + e_drop_pct_7d
+```
+
+| E[net] | Action |
+|---|---|
+| ≥+15% | **FULL-SIZE** — banger-native; both tails favor upside |
+| +5% to +15% | **MODE-TIER** — small +EV, mode-default sizing |
+| −5% to +5% | **FLAT-EV** — wrong sleeve, banger structure not warranted |
+| <−5% | **NEGATIVE-EV** — chase trap; skip entry |
+
+**Regime sensitivity:** v0.1 anchors are calibrated at BULL regime baseline (current CRI 3.7). Drawdown is more regime-sensitive than upside — bear-market drawdown rates run 2-3x bull baseline. Refit gate flags `[REGIME-SHIFT]` if the regime tier changes mid-cohort.
+
+**MRAM 5/8 validation:** drawdown_score=80 → E[net]=−29.6%, P(≤−30%)=73%. Quantitatively confirms the chase-trap AVOID call. Post-blow-off entry is a structural sink, not a probabilistic edge.
+
+Calibration tracker: `data/cache/banger-board-downside-calibration.jsonl` (append-only, 5 boolean drop hits + `outcome_min_pct_7d` filled by t+7 retro-update job).
+
+---
+
+## Local visualization dashboard
+
+A self-contained HTML dashboard reads the calibration JSONL files + emits a filterable, sortable table view w/ tooltips + per-row component breakdown. No build step, no framework — vanilla JS + native HTML.
+
+**Build + open:**
+```bash
+python3 dashboard/banger-board/build.py
+open dashboard/banger-board/index.html
+```
+
+**Features:**
+- Summary cards: total candidates, FULL-SIZE count, NEGATIVE-EV count, avg E[net]
+- Filters: ticker search, cap tier, EV tier, min E[net]
+- Sort by any column (default: E[net] descending)
+- Click a row to expand: shows 5-anchor probability ladders for both upside + downside, full component breakdown w/ per-component progress bars, and any calibration notes / preliminary outcomes
+- Tooltips on every column header explaining the metric + thresholds
+- Color coding: green for +EV tiers, red for NEGATIVE-EV / AVOID, neutral for FLAT
+
+Refresh after each `/banger-board` run to pull the latest cache.
+
+---
+
 ## What this skill deliberately does NOT do
 
 - **No auto-execute** — output is read-only board; user enters manually
