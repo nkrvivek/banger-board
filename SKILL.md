@@ -596,6 +596,162 @@ for rec in records:
    Calibration tracker live at data/cache/banger-board-calibration.jsonl
 ```
 
+### Phase D.9 — Downside calibration (v0.1 5/8 run6: drawdown anchors + E[drop])
+
+Mirror of D.8 for downside — predicts probability of max-low drawdown over 7d at five negative anchors. **Critical separation:** drawdown drivers ≠ pop drivers, so the conv score is NOT reused. New 0-100 `drawdown_score` w/ different components.
+
+**Anchor thresholds:** `≤−5%` · `≤−10%` · `≤−20%` · `≤−30%` · `≤−50%`. Same anti-muddiness budget as D.8 (5 max, 3 tiers max, no per-mode fits, cohort refit, no hand-tuning between refits).
+
+**Drawdown score components (0-100 total):**
+
+| # | Component | Range | Trigger |
+|---|---|---|---|
+| 1 | already_popped_magnitude | 0-30 | Bucket B `pct_5d`: 0-10%=0, 10-20%=10, 20-30%=20, 30%+=30. Mean-reversion gravity ↑ w/ pop size. |
+| 2 | iv_crush_risk | 0-20 | IVR<60=0, 60-80=5, 80-95=15, 95-100+ER<7d=20. Captures post-ER vol unwind (-10 to -25% typical). |
+| 3 | theme_rotation_risk | 0-15 | cluster≥3 + leads already +20%/5d=15; cluster=2=8; cluster=1=0. Late-stage rotation. |
+| 4 | cap_fragility | 0-15 | small+float<30M=15; small+float<60M=10; mid=5; mega=0. Halt/dilution/delisting tail. |
+| 5 | rvol_exhaustion | 0-20 | RVOL≥3x sustained 3d+ AND pct_5d≥30%=20 (blow-off); RVOL≥3x 1-2d=10; RVOL 2-3x=5. |
+
+Total 0-100. Default Bucket-A pre-pop = 5-20 (low). Bucket-B post-pop = 30-50. Blow-off (MRAM-class) = 70-90.
+
+**Formulas (v0.1):**
+
+```python
+LOGIT_PARAMS_DOWNSIDE = {
+    "small": {  # $200M-$1B
+        5:  (-1.5, 0.055),
+        10: (-2.2, 0.055),
+        20: (-3.0, 0.060),
+        30: (-3.8, 0.060),
+        50: (-5.0, 0.055),
+    },
+    "mid": {    # $1B-$50B
+        5:  (-2.3, 0.050),
+        10: (-3.0, 0.050),
+        20: (-3.8, 0.055),
+        30: (-4.5, 0.055),
+        50: (-6.0, 0.045),
+    },
+    "mega": {   # ≥$50B
+        5:  (-2.8, 0.045),
+        10: (-3.8, 0.045),
+        20: (-4.8, 0.040),
+        30: (-5.8, 0.040),
+        50: (-8.0, 0.035),
+    },
+}
+
+# Negative midpoints for E[drop]
+BUCKET_MIDPOINTS_DOWNSIDE = {
+    (0, 5):    -2.5,
+    (5, 10):   -7.5,
+    (10, 20):  -15.0,
+    (20, 30):  -25.0,
+    (30, 50):  -40.0,
+    (50, 100): -65.0,
+}
+
+def drop_probability(drawdown_score: float, market_cap_usd: float) -> dict:
+    """Returns 5 negative-anchor probabilities + E[drop] + cap_tier."""
+    if market_cap_usd >= 50_000_000_000: cap_tier = "mega"
+    elif market_cap_usd >= 1_000_000_000: cap_tier = "mid"
+    else: cap_tier = "small"
+
+    params = LOGIT_PARAMS_DOWNSIDE[cap_tier]
+    probs = {t: sigmoid(i + s * drawdown_score) for t, (i, s) in params.items()}
+
+    # Defensive monotone clamp (drift safety on future refits)
+    sorted_t = sorted(probs.keys())
+    for i in range(1, len(sorted_t)):
+        if probs[sorted_t[i]] > probs[sorted_t[i-1]]:
+            probs[sorted_t[i]] = probs[sorted_t[i-1]]
+
+    p5, p10, p20, p30, p50 = probs[5], probs[10], probs[20], probs[30], probs[50]
+    masses = {(0,5): 1-p5, (5,10): p5-p10, (10,20): p10-p20,
+              (20,30): p20-p30, (30,50): p30-p50, (50,100): p50}
+    e_drop_pct = sum(BUCKET_MIDPOINTS_DOWNSIDE[k] * m for k, m in masses.items())
+
+    return {
+        "p_drop_5pct_7d":  round(p5,  3),
+        "p_drop_10pct_7d": round(p10, 3),
+        "p_drop_20pct_7d": round(p20, 3),
+        "p_drop_30pct_7d": round(p30, 3),
+        "p_drop_50pct_7d": round(p50, 3),
+        "e_drop_pct_7d":   round(e_drop_pct, 1),
+        "cap_tier": cap_tier,
+        "downside_calibration_version": "v0.1",
+    }
+```
+
+**Reference anchors (v0.1, BULL regime baseline):**
+
+| Score | Tier | P(≤−5%) | P(≤−10%) | P(≤−20%) | P(≤−30%) | P(≤−50%) | E[drop] |
+|---|---|---|---|---|---|---|---|
+| 0   | small | 18% | 10% | 5%  | 2%  | 0.7%| −2.6% |
+| 0   | mid   | 9%  | 5%  | 2%  | 1%  | 0.2%| −1.6% |
+| 0   | mega  | 6%  | 2%  | 1%  | 0.3%| —    | −1.0% |
+| 50  | small | 78% | 63% | 50% | 31% | 10% | −15.7%|
+| 50  | mid   | 51% | 38% | 26% | 14% | 2%  | −7.9% |
+| 50  | mega  | 36% | 18% | 7%  | 3%  | 0.2%| −4.4% |
+| 80  | small | 95% | 90% | 86% | 73% | 35% | −31.0%|
+| 80  | mid   | 84% | 73% | 65% | 52% | 11% | −20.5%|
+| 80  | mega  | 70% | 49% | 25% | 12% | 1%  | −9.7% |
+| 100 | small | 98% | 96% | 95% | 90% | 62% | −42.0%|
+| 100 | mid   | 93% | 88% | 85% | 78% | 33% | −29.7%|
+| 100 | mega  | 86% | 71% | 47% | 28% | 6%  | −15.5%|
+
+**EV math (combined upside + downside):**
+
+```python
+e_net_pct_7d = e_pop_pct_7d + e_drop_pct_7d  # signed sum
+# Position-level: e_net_$ = e_net_pct_7d/100 * position_$
+# Sleeve-level: sum(e_net_$) over all positions = expected sleeve change
+```
+
+**Sleeve action gate (combined):**
+
+| E[net] | Action |
+|---|---|
+| ≥+15% | Full size (banger-native; both tails favor upside) |
+| +5% to +15% | Mode-tier size (small +EV, sleeve discipline still applies) |
+| −5% to +5% | Quarter size + flag `[FLAT-EV]` — sleeve is wrong instrument |
+| <−5% | **Skip / fade** — emit `[NEGATIVE-EV]`. Examples: post-blow-off chases (MRAM 5/8 chase entry would land here). |
+
+**Calibration tracker (downside half):**
+
+Append to same JSONL `data/cache/banger-board-calibration.jsonl` — adds downside fields to existing record (one record per ticker per run, both halves):
+
+```jsonl
+{"run_date":"2026-05-08","ticker":"SNDK",...,
+ "drawdown_score":45,"p_drop_5":0.487,"p_drop_10":0.321,"p_drop_20":0.210,"p_drop_30":0.116,"p_drop_50":0.018,"e_drop_pct_7d":-11.6,"downside_components":{"already_popped":20,"iv_crush":5,"theme_rotation":10,"cap_fragility":0,"rvol_exhaustion":10},
+ "outcome_min_pct_7d":null,"outcome_drop_hit_5pct":null,"outcome_drop_hit_10pct":null,"outcome_drop_hit_20pct":null,"outcome_drop_hit_30pct":null,"outcome_drop_hit_50pct":null}
+```
+
+**Retro-update (downside):** alongside upside max-of-window, also compute `outcome_min_pct_7d = (min_low - run_close)/run_close * 100` and fill 5 boolean drop hits.
+
+**Refit gate (HARD, mirror of D.8):**
+
+| Gate | Threshold |
+|---|---|
+| Cohort size | n ≥ 30 outcomes finalized |
+| Per-tier coverage | n ≥ 10 in each cap_tier |
+| Brier improvement | new params reduce brier ≥0.02 vs v0.1 |
+| Monotone constraint | P(≤−t1) ≥ P(≤−t2) ∀ t1<t2 |
+| LLM council review | dispatch synthetic `BANGER-BOARD-DRAWDOWN-CALIB` to `mcp__traderkit__llm_council` before shipping |
+
+Bumps `downside_calibration_version` v0.1 → v1.0 atomically on first refit. **No hand-tuning between refits.**
+
+**Regime sensitivity (FUTURE, v1.0+):** v0.1 anchors assume BULL regime (current CRI 3.7). Downside is more regime-sensitive than upside (bear-market drawdown rates 2-3x bull baseline). When regime tier flips → recompute base rate at the per-tier intercept only, slope holds. Not implemented v0.1; flag w/ `[REGIME-SHIFT]` if `wiki/trading/market-regime.md` tier changes mid-cohort and gate refit until new cohort fills.
+
+**Disclaimer (USER-FACING, downside emit):**
+
+```
+ℹ️ Downside probs are v0.1 LOGISTIC CALIBRATIONS at BULL regime baseline. ±25pt CI until v1 ships.
+   Drawdown drivers (post-pop magnitude, IV crush, theme rotation, cap fragility, rvol exhaustion)
+   are STRUCTURALLY DIFFERENT from upside drivers — drawdown_score ≠ conv_score.
+   Use to RANK candidates by chase-trap risk, not size precisely.
+```
+
 ### Phase E — Emit board
 
 **Standard emit (single tier, N=10 default):**
