@@ -462,6 +462,26 @@ def pop_probability(conv_score: float, market_cap_usd: float, bucket: str = "A")
     }
 ```
 
+**MRAM PROFILE flag (NEW v1.1, post-MRAM-5/8-pop lesson):**
+
+Any setup-smallcap candidate satisfying ALL of these = `MRAM-PROFILE` tag, prioritize on emit + auto-flag in calibration tracker:
+
+1. Cap $200M ≤ market_cap < $1B
+2. pct_7d < 5% (truly pre-pop, not borderline)
+3. Float < 30M shares (tiny float = violent move on small flow, MRAM had ~22M)
+4. Lead theme ticker (per `theme_adjacency_map.leads[]`) popped ≥10% in last 5d
+5. Candidate is in same theme bucket via `theme_adjacency_map.adjacencies[]`
+
+These are the structural conditions present before MRAM 5/8 (theme-sympathy + tiny-cap + tiny-float + lead rip). Encode in scan output:
+
+```
+[MRAM-PROFILE] {ticker} cap=${cap_b}B float={float_m}M pct_7d={pct_7d}% lead={hot_lead} lead_5d=+{lead_pct}%
+```
+
+Treat MRAM-PROFILE matches as **HIGH conviction by default** (override conv-score gate) — they qualify for the watchlist regardless of options-flow signals (which are blind on tiny floats anyway).
+
+**Empirical justification:** MRAM 5/8 was the canonical case — ai-memory leads (MU/SNDK) ripped +25-30% in week, MRAM (cap $0.6B, float ~22M, ai-memory adjacency) sat flat for several days, then ripped +25% RTH + +34% AH = ~+67% in one day. Setup-smallcap mode added today (5/8) post-MRAM, so MRAM was missed b/c the mode didn't exist. Going forward: MRAM-PROFILE flag fires automatically on the next analog.
+
 **Anti-muddiness budget (HARD — design constraint):**
 
 | Lever | Cap | Why |
